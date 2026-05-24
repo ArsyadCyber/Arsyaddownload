@@ -3,6 +3,7 @@ import { logger } from "../lib/logger";
 import { handleYtDownload, handleResolutionCallback } from "./handlers/ytDownload";
 import { handleIgDownload } from "./handlers/igDownload";
 import { handleTtDownload, handleTtCallback } from "./handlers/ttDownload";
+import { handleThreadsDownload } from "./handlers/threadsDownload";
 
 const token = process.env["TELEGRAM_BOT_TOKEN"];
 if (!token) {
@@ -20,18 +21,24 @@ const instagramRegex =
 const tiktokRegex =
   /^(https?:\/\/)?(www\.|vm\.|vt\.|m\.)?tiktok\.com\/([@\w.-]+\/video\/\d+|v\/\d+|[\w-]+\/?)/i;
 
+const threadsRegex =
+  /^(https?:\/\/)?(www\.)?threads\.(net|com)\/@[\w.-]+\/post\/[\w-]+/i;
+
 bot.command("start", async (ctx) => {
   const keyboard = new InlineKeyboard()
     .text("▶️ YouTube", "yt_download")
     .text("📸 Instagram", "ig_download")
-    .text("🎵 TikTok", "tt_download");
+    .row()
+    .text("🎵 TikTok", "tt_download")
+    .text("🧵 Threads", "threads_download");
 
   await ctx.reply(
     `Halo, *${ctx.from?.first_name ?? "Pengguna"}*\\! 👋\n\n` +
       `Selamat datang\\! Saya bisa membantu kamu mengunduh media dari:\n\n` +
       `▶️ *YouTube* — Video dengan pilihan resolusi\n` +
       `📸 *Instagram* — Reels, Post, Foto, Carousel\n` +
-      `🎵 *TikTok* — Video dengan/tanpa watermark \\+ Audio\n\n` +
+      `🎵 *TikTok* — Video dengan/tanpa watermark \\+ Audio\n` +
+      `🧵 *Threads* — Video & Foto dari postingan\n\n` +
       `Pilih platform di bawah atau langsung kirim link\\!`,
     { parse_mode: "MarkdownV2", reply_markup: keyboard },
   );
@@ -57,6 +64,14 @@ bot.callbackQuery("tt_download", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply(
     "🎵 *TikTok Download*\n\nKirimkan link TikTok.\n\nContoh:\n`https://www.tiktok.com/@user/video/123...`\n`https://vm.tiktok.com/xxxxx/`",
+    { parse_mode: "Markdown" },
+  );
+});
+
+bot.callbackQuery("threads_download", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    "🧵 *Threads Download*\n\nKirimkan link postingan Threads.\n\nContoh:\n`https://www.threads.net/@user/post/xxxxx`",
     { parse_mode: "Markdown" },
   );
 });
@@ -104,9 +119,13 @@ bot.on("message:text", async (ctx) => {
     await handleTtDownload(ctx, text);
     return;
   }
+  if (threadsRegex.test(text)) {
+    await handleThreadsDownload(ctx, text);
+    return;
+  }
 
   await ctx.reply(
-    "Kirimkan link YouTube, Instagram, atau TikTok yang valid — atau ketik /start untuk melihat menu.",
+    "Kirimkan link YouTube, Instagram, TikTok, atau Threads yang valid — atau ketik /start untuk melihat menu.",
   );
 });
 
