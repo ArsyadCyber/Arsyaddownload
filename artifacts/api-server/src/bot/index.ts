@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard } from "grammy";
 import { logger } from "../lib/logger";
-import { handleYtDownload } from "./handlers/ytDownload";
+import { handleYtDownload, handleResolutionCallback } from "./handlers/ytDownload";
 
 const token = process.env["TELEGRAM_BOT_TOKEN"];
 
@@ -28,6 +28,23 @@ bot.callbackQuery("yt_download", async (ctx) => {
     "🔗 Kirimkan link YouTube yang ingin kamu download.\n\nContoh: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`",
     { parse_mode: "Markdown" },
   );
+});
+
+bot.callbackQuery(/^res:(.+):(.+)$/, async (ctx) => {
+  const [, sessionKey, formatId] = ctx.match;
+
+  if (!sessionKey || !formatId) {
+    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
+    return;
+  }
+
+  if (formatId === "cancel") {
+    await ctx.answerCallbackQuery({ text: "❌ Dibatalkan." });
+    await ctx.deleteMessage().catch(() => null);
+    return;
+  }
+
+  await handleResolutionCallback(ctx, sessionKey, formatId);
 });
 
 bot.on("message:text", async (ctx) => {

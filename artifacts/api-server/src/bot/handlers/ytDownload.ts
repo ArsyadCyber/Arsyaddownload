@@ -1,147 +1,324 @@
-import { Context, InputFile } from "grammy";
+import { Context, InputFile, InlineKeyboard } from "grammy";
 import youtubeDl from "youtube-dl-exec";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { logger } from "../../lib/logger";
+import {
+  saveSession,
+  getSession,
+  deleteSession,
+  generateKey,
+  type Resolution,
+} from "../session";
+
+interface YtFormat {
+  format_id: string;
+  ext: string;
+  height?: number | null;
+  vcodec?: string;
+  acodec?: string;
+  filesize?: number | null;
+  filesize_approx?: number | null;
+  tbr?: number | null;
+}
+
+interface YtInfo {
+  title?: string;
+  uploader?: string;
+  duration?: number;
+  view_count?: number;
+  formats?: YtFormat[];
+}
 
 export async function handleYtDownload(ctx: Context, url: string) {
   const statusMsg = await ctx.reply("⏳ Mengambil info video, harap tunggu...");
 
   try {
-    const info = await youtubeDl(url, {
+    const raw = await youtubeDl(url, {
       dumpSingleJson: true,
       noWarnings: true,
-      preferFreeFormats: true,
-      youtubeSkipDashManifest: true,
     });
 
-    const videoInfo = info as {
-      title?: string;
-      uploader?: string;
-      duration?: number;
-      view_count?: number;
-      thumbnail?: string;
-      filesize_approx?: number;
-    };
+    const info = raw as YtInfo;
 
-    const title = videoInfo.title ?? "Tidak diketahui";
-    const uploader = videoInfo.uploader ?? "Tidak diketahui";
-    const duration = videoInfo.duration
-      ? formatDuration(videoInfo.duration)
+    const title = info.title ?? "Tidak diketahui";
+    const uploader = info.uploader ?? "Tidak diketahui";
+    const duration = info.duration
+      ? formatDuration(info.duration)
       : "Tidak diketahui";
-    const views = videoInfo.view_count
-      ? videoInfo.view_count.toLocaleString("id-ID")
+    const views = info.view_count
+      ? info.view_count.toLocaleString("id-ID")
       : "Tidak diketahui";
 
+    const resolutions = buildResolutions(info.formats ?? []);
+
+    if (resolutions.length === 0) {
+      throw new Error("Tidak ada format video yang tersedia untuk diunduh.");
+    }
+
+    const chatId = ctx.chat!.id;
+    const userId = ctx.from!.id;
+    const sessionKey = generateKey(chatId, userId);
+
+    saveSession(sessionKey, {
+      url,
+      title,
+      uploader,
+      duration,
+      resolutions,
+      createdAt: Date.now(),
+    });
+
+    const keyboard = buildResolutionKeyboard(resolutions, sessionKey);
+
+    await ctx.api.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      `📹 *${escapeMarkdown(title)}*\n\n` +
+        `📺 *Channel:* ${escapeMarkdown(uploader)}\n` +
+        `⏱ *Durasi:* ${duration}\n` +
+        `👁 *Ditonton:* ${views} kali\n\n` +
+        `🎚 Pilih resolusi yang ingin diunduh:`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: keyboard,
+      },
+    );
+  } catch (err) {
+    logger.error({ err, url }, "YouTube info fetch failed");
     await ctx.api.editMessageText(
       ctx.chat!.id,
       statusMsg.message_id,
-      `📹 *Info Video*\n\n` +
-        `*Judul:* ${escapeMarkdown(title)}\n` +
-        `*Channel:* ${escapeMarkdown(uploader)}\n` +
-        `*Durasi:* ${duration}\n` +
-        `*Ditonton:* ${views} kali\n\n` +
-        `⬇️ Mengunduh video... Harap tunggu.`,
+      buildErrorMessage(err),
       { parse_mode: "Markdown" },
     );
+  }
+}
 
+export async function handleResolutionCallback(
+  ctx: Context,
+  sessionKey: string,
+  formatId: string,
+) {
+  await ctx.answerCallbackQuery({ text: "⬇️ Memulai download..." });
+
+  const session = getSession(sessionKey);
+  if (!session) {
+    await ctx.reply(
+      "⚠️ Sesi telah kedaluwarsa. Kirim ulang link YouTube kamu.",
+    );
+    return;
+  }
+
+  const resolution = session.resolutions.find((r) => r.formatId === formatId);
+  const resLabel = resolution?.label ?? formatId;
+
+  const chatId = ctx.chat!.id;
+
+  const statusMsg = await ctx.reply(
+    `⏳ Mengunduh *${escapeMarkdown(session.title)}*\n` +
+      `📐 Resolusi: *${resLabel}*\n\nHarap tunggu...`,
+    { parse_mode: "Markdown" },
+  );
+
+  deleteSession(sessionKey);
+
+  try {
     const tmpDir = os.tmpdir();
-    const outputTemplate = path.join(tmpDir, "%(id)s.%(ext)s");
+    const fileId = `yt_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const outputTemplate = path.join(tmpDir, `${fileId}.%(ext)s`);
 
-    await youtubeDl(url, {
-      output: outputTemplate,
-      format: "bestvideo[ext=mp4][filesize<50M]+bestaudio[ext=m4a]/best[ext=mp4][filesize<50M]/best[filesize<50M]",
-      noWarnings: true,
-      mergeOutputFormat: "mp4",
+    const isAudioOnly = resolution?.audioOnly === true;
+
+    if (isAudioOnly) {
+      await youtubeDl(session.url, {
+        output: outputTemplate,
+        format: "bestaudio/best",
+        noWarnings: true,
+        extractAudio: true,
+        audioFormat: "mp3",
+        audioQuality: 0,
+      });
+    } else {
+      const format =
+        formatId === "best"
+          ? "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+          : `${formatId}+bestaudio/bestvideo[height<=${resolution?.height ?? 720}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${resolution?.height ?? 720}][ext=mp4]/best[height<=${resolution?.height ?? 720}]`;
+
+      await youtubeDl(session.url, {
+        output: outputTemplate,
+        format,
+        noWarnings: true,
+        mergeOutputFormat: "mp4",
+      });
+    }
+
+    const ext = isAudioOnly ? ".mp3" : ".mp4";
+    const candidates = fs.readdirSync(tmpDir).filter((f) => {
+      return f.startsWith(fileId) && (f.endsWith(".mp4") || f.endsWith(".mp3") || f.endsWith(".webm") || f.endsWith(".mkv") || f.endsWith(".m4a"));
     });
 
-    const files = fs.readdirSync(tmpDir).filter((f) => {
-      const fullPath = path.join(tmpDir, f);
-      const stat = fs.statSync(fullPath);
-      const ageMs = Date.now() - stat.mtimeMs;
-      return (
-        (f.endsWith(".mp4") || f.endsWith(".webm") || f.endsWith(".mkv")) &&
-        ageMs < 60_000
-      );
-    });
-
-    if (files.length === 0) {
+    if (candidates.length === 0) {
       throw new Error("File hasil download tidak ditemukan.");
     }
 
-    const filePath = path.join(tmpDir, files[0]!);
+    const filePath = path.join(tmpDir, candidates[0]!);
     const stat = fs.statSync(filePath);
     const fileSizeMB = stat.size / (1024 * 1024);
 
     if (fileSizeMB > 50) {
       fs.unlinkSync(filePath);
       await ctx.api.editMessageText(
-        ctx.chat!.id,
+        chatId,
         statusMsg.message_id,
-        `❌ *Video terlalu besar!*\n\nUkuran video (${fileSizeMB.toFixed(1)} MB) melebihi batas 50 MB yang diizinkan Telegram.\n\nCoba video yang lebih pendek.`,
-        { parse_mode: "Markdown" },
+        `❌ *Video terlalu besar\\!*\n\nUkuran \\(${fileSizeMB.toFixed(1)} MB\\) melebihi batas 50 MB Telegram\\.\n\nCoba pilih resolusi yang lebih rendah\\.`,
+        { parse_mode: "MarkdownV2" },
       );
       return;
     }
 
     await ctx.api.editMessageText(
-      ctx.chat!.id,
+      chatId,
       statusMsg.message_id,
-      `✅ Download selesai (${fileSizeMB.toFixed(1)} MB). Mengirim video...`,
+      `✅ Download selesai \\(${fileSizeMB.toFixed(1)} MB\\)\\. Mengirim\\.\\.\\.`,
+      { parse_mode: "MarkdownV2" },
     );
 
-    await ctx.replyWithVideo(
-      new InputFile(fs.createReadStream(filePath), path.basename(filePath)),
-      {
-        caption: `🎬 *${escapeMarkdown(title)}*\n📺 ${escapeMarkdown(uploader)}`,
-        parse_mode: "Markdown",
-      },
-    );
+    const caption =
+      `🎬 *${escapeMarkdown(session.title)}*\n` +
+      `📺 ${escapeMarkdown(session.uploader)}\n` +
+      `📐 ${escapeMarkdown(resLabel)}`;
 
-    fs.unlinkSync(filePath);
-
-    await ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id);
-  } catch (err) {
-    logger.error({ err, url }, "YouTube download failed");
-
-    const errorMessage =
-      err instanceof Error ? err.message : "Terjadi kesalahan tidak dikenal.";
-
-    const isAgeRestricted =
-      errorMessage.toLowerCase().includes("age") ||
-      errorMessage.toLowerCase().includes("sign in");
-    const isPrivate =
-      errorMessage.toLowerCase().includes("private") ||
-      errorMessage.toLowerCase().includes("unavailable");
-
-    let userMessage = `❌ *Gagal mengunduh video.*\n\n`;
-
-    if (isAgeRestricted) {
-      userMessage += "Video ini memiliki batasan usia dan tidak bisa diunduh.";
-    } else if (isPrivate) {
-      userMessage +=
-        "Video ini bersifat privat atau tidak tersedia di wilayah ini.";
+    if (isAudioOnly) {
+      await ctx.replyWithAudio(
+        new InputFile(fs.createReadStream(filePath), `audio${ext}`),
+        { caption, parse_mode: "Markdown" },
+      );
     } else {
-      userMessage +=
-        "Pastikan link yang kamu kirim valid dan video tersedia untuk umum.\n\n" +
-        `Detail: \`${escapeMarkdown(errorMessage.slice(0, 200))}\``;
+      await ctx.replyWithVideo(
+        new InputFile(fs.createReadStream(filePath), `video${ext}`),
+        { caption, parse_mode: "Markdown" },
+      );
     }
 
+    fs.unlinkSync(filePath);
+    await ctx.api.deleteMessage(chatId, statusMsg.message_id);
+  } catch (err) {
+    logger.error({ err, url: session.url }, "YouTube download failed");
     await ctx.api.editMessageText(
-      ctx.chat!.id,
+      chatId,
       statusMsg.message_id,
-      userMessage,
+      buildErrorMessage(err),
       { parse_mode: "Markdown" },
     );
   }
+}
+
+function buildResolutions(formats: YtFormat[]): Resolution[] {
+  const seen = new Set<string>();
+  const result: Resolution[] = [];
+
+  const videoFormats = formats
+    .filter(
+      (f) =>
+        f.vcodec &&
+        f.vcodec !== "none" &&
+        f.height &&
+        f.height > 0 &&
+        (f.ext === "mp4" || f.ext === "webm"),
+    )
+    .sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
+
+  const targetHeights = [2160, 1440, 1080, 720, 480, 360, 240, 144];
+
+  for (const targetHeight of targetHeights) {
+    const match = videoFormats.find((f) => f.height === targetHeight);
+    if (match && !seen.has(String(targetHeight))) {
+      seen.add(String(targetHeight));
+      const label = targetHeight >= 2160
+        ? `4K (${targetHeight}p)`
+        : targetHeight >= 1440
+        ? `2K (${targetHeight}p)`
+        : `${targetHeight}p`;
+      result.push({
+        label,
+        formatId: match.format_id,
+        height: targetHeight,
+        audioOnly: false,
+      });
+    }
+  }
+
+  if (result.length === 0) {
+    result.push({
+      label: "Kualitas terbaik",
+      formatId: "best",
+      height: null,
+      audioOnly: false,
+    });
+  }
+
+  result.push({
+    label: "🎵 Audio Only (MP3)",
+    formatId: "audio",
+    height: null,
+    audioOnly: true,
+  });
+
+  return result;
+}
+
+function buildResolutionKeyboard(
+  resolutions: Resolution[],
+  sessionKey: string,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+
+  const videoRes = resolutions.filter((r) => !r.audioOnly);
+  const audioRes = resolutions.filter((r) => r.audioOnly);
+
+  const itemsPerRow = 3;
+  for (let i = 0; i < videoRes.length; i++) {
+    const res = videoRes[i]!;
+    keyboard.text(res.label, `res:${sessionKey}:${res.formatId}`);
+    if ((i + 1) % itemsPerRow === 0 || i === videoRes.length - 1) {
+      keyboard.row();
+    }
+  }
+
+  for (const res of audioRes) {
+    keyboard.text(res.label, `res:${sessionKey}:${res.formatId}`);
+    keyboard.row();
+  }
+
+  keyboard.text("❌ Batalkan", `res:${sessionKey}:cancel`);
+
+  return keyboard;
+}
+
+function buildErrorMessage(err: unknown): string {
+  const msg = err instanceof Error ? err.message : "Terjadi kesalahan tidak dikenal.";
+  const lower = msg.toLowerCase();
+
+  if (lower.includes("age") || lower.includes("sign in")) {
+    return "❌ *Gagal mengunduh.*\n\nVideo ini memiliki batasan usia dan tidak bisa diunduh.";
+  }
+  if (lower.includes("private") || lower.includes("unavailable")) {
+    return "❌ *Gagal mengunduh.*\n\nVideo ini bersifat privat atau tidak tersedia di wilayah ini.";
+  }
+
+  return (
+    `❌ *Gagal mengunduh.*\n\n` +
+    `Pastikan link valid dan video tersedia untuk umum.\n\n` +
+    `Detail: \`${escapeMarkdown(msg.slice(0, 200))}\``
+  );
 }
 
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   const s = Math.floor(seconds % 60);
-
   if (h > 0) {
     return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   }
