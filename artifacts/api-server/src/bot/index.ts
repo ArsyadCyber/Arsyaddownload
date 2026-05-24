@@ -3,7 +3,7 @@ import { logger } from "../lib/logger";
 import { handleYtDownload, handleResolutionCallback } from "./handlers/ytDownload";
 import { handleIgDownload } from "./handlers/igDownload";
 import { handleTtDownload, handleTtCallback } from "./handlers/ttDownload";
-import { handleThreadsDownload } from "./handlers/threadsDownload";
+import { handleThreadsDownload, handleThreadsCallback } from "./handlers/threadsDownload";
 
 const token = process.env["TELEGRAM_BOT_TOKEN"];
 if (!token) {
@@ -102,6 +102,15 @@ bot.callbackQuery(/^tt:(.+):(wm|nwm|audio|cancel)$/, async (ctx) => {
     return;
   }
   await handleTtCallback(ctx, sessionKey, choice);
+});
+
+bot.callbackQuery(/^thr:(.+):(all|cancel|\d+)$/, async (ctx) => {
+  const [, sessionKey, choice] = ctx.match;
+  if (!sessionKey || !choice) {
+    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
+    return;
+  }
+  await handleThreadsCallback(ctx, sessionKey, choice);
 });
 
 bot.on("message:text", async (ctx) => {

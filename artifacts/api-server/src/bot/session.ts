@@ -63,6 +63,28 @@ export function deleteTtSession(key: string): void {
   ttStore.delete(key);
 }
 
+export interface ThreadsMediaItem {
+  type: "video" | "image";
+  url: string;
+}
+
+export interface ThreadsSession {
+  items: ThreadsMediaItem[];
+  createdAt: number;
+}
+
+const thrStore = makeStore<ThreadsSession>();
+
+export function saveThrSession(key: string, session: ThreadsSession): void {
+  thrStore.save(key, session);
+}
+export function getThrSession(key: string): ThreadsSession | undefined {
+  return thrStore.get(key);
+}
+export function deleteThrSession(key: string): void {
+  thrStore.delete(key);
+}
+
 export function generateKey(chatId: number, userId: number): string {
   return `${chatId}_${userId}_${Date.now()}`;
 }
