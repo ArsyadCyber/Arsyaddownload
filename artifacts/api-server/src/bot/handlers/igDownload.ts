@@ -11,6 +11,11 @@ interface IgItem {
   url: string;
 }
 
+interface DownloadedMedia {
+  filePath: string;
+  isVideo: boolean;
+}
+
 export async function handleIgDownload(ctx: Context, url: string) {
   const statusMsg = await ctx.reply(
     "⏳ Mengambil media Instagram, harap tunggu...",
@@ -22,7 +27,9 @@ export async function handleIgDownload(ctx: Context, url: string) {
     const response = await igdl(url);
 
     if (!response.status || !response.result || response.result.length === 0) {
-      const reason = (response as { message?: string }).message ?? "Tidak ada media yang ditemukan.";
+      const reason =
+        (response as { message?: string }).message ??
+        "Tidak ada media yang ditemukan.";
       throw new Error(reason);
     }
 
@@ -38,53 +45,58 @@ export async function handleIgDownload(ctx: Context, url: string) {
 
     if (total === 1) {
       const item = items[0]!;
-      const filePath = await downloadToTemp(item.url);
+      const media = await downloadToTemp(item.url);
 
       try {
-        const isVideo = isVideoFile(filePath, item.url);
-        if (isVideo) {
+        if (media.isVideo) {
           await ctx.replyWithVideo(
-            new InputFile(fs.createReadStream(filePath), "media.mp4"),
+            new InputFile(fs.createReadStream(media.filePath), "media.mp4"),
             { caption: "📹 Instagram Video" },
           );
         } else {
           await ctx.replyWithPhoto(
-            new InputFile(fs.createReadStream(filePath), "media.jpg"),
+            new InputFile(fs.createReadStream(media.filePath), "media.jpg"),
             { caption: "📸 Instagram Photo" },
           );
         }
       } finally {
-        fs.unlink(filePath, () => null);
+        fs.unlink(media.filePath, () => null);
       }
     } else {
       const chunks = chunkArray(items, 10);
 
       for (let ci = 0; ci < chunks.length; ci++) {
         const chunk = chunks[ci]!;
-        const tempFiles: string[] = [];
+        const downloaded: DownloadedMedia[] = [];
 
         try {
-          const mediaGroup = await Promise.all(
-            chunk.map(async (item) => {
-              const filePath = await downloadToTemp(item.url);
-              tempFiles.push(filePath);
-              const isVideo = isVideoFile(filePath, item.url);
-              if (isVideo) {
-                return InputMediaBuilder.video(
-                  new InputFile(fs.createReadStream(filePath), "media.mp4"),
-                );
-              } else {
-                return InputMediaBuilder.photo(
-                  new InputFile(fs.createReadStream(filePath), "media.jpg"),
-                );
-              }
-            }),
-          );
+          for (const item of chunk) {
+            const media = await downloadToTemp(item.url);
+            downloaded.push(media);
+          }
+
+          const mediaGroup = downloaded.map((media) => {
+            if (media.isVideo) {
+              return InputMediaBuilder.video(
+                new InputFile(
+                  fs.createReadStream(media.filePath),
+                  "media.mp4",
+                ),
+              );
+            } else {
+              return InputMediaBuilder.photo(
+                new InputFile(
+                  fs.createReadStream(media.filePath),
+                  "media.jpg",
+                ),
+              );
+            }
+          });
 
           await ctx.replyWithMediaGroup(mediaGroup);
         } finally {
-          for (const f of tempFiles) {
-            fs.unlink(f, () => null);
+          for (const media of downloaded) {
+            fs.unlink(media.filePath, () => null);
           }
         }
 
@@ -119,11 +131,7 @@ export async function handleIgDownload(ctx: Context, url: string) {
   }
 }
 
-async function downloadToTemp(url: string): Promise<string> {
-  const ext = guessExtension(url);
-  const fileName = `ig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${ext}`;
-  const filePath = path.join(os.tmpdir(), fileName);
-
+async function downloadToTemp(url: string): Promise<DownloadedMedia> {
   const res = await fetch(url, {
     headers: {
       "User-Agent":
@@ -135,38 +143,38 @@ async function downloadToTemp(url: string): Promise<string> {
     throw new Error(`Gagal mengunduh media (HTTP ${res.status})`);
   }
 
+  const contentType = res.headers.get("content-type") ?? "";
+  const isVideo = contentType.startsWith("video/") || isVideoByUrl(url);
+  const ext = isVideo ? ".mp4" : ".jpg";
+
+  const fileName = `ig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${ext}`;
+  const filePath = path.join(os.tmpdir(), fileName);
+
   const fileStream = fs.createWriteStream(filePath);
   await new Promise<void>((resolve, reject) => {
     if (!res.body) {
       reject(new Error("Response body kosong"));
       return;
     }
-    Readable.fromWeb(res.body as Parameters<typeof Readable.fromWeb>[0]).pipe(fileStream);
+    Readable.fromWeb(
+      res.body as Parameters<typeof Readable.fromWeb>[0],
+    ).pipe(fileStream);
     fileStream.on("finish", resolve);
     fileStream.on("error", reject);
   });
 
-  return filePath;
+  return { filePath, isVideo };
 }
 
-function isVideoFile(filePath: string, url: string): boolean {
-  const lowerUrl = url.toLowerCase().split("?")[0] ?? "";
-  if (lowerUrl.endsWith(".mp4") || lowerUrl.endsWith(".mov") || lowerUrl.endsWith(".webm")) {
-    return true;
-  }
-  const lowerPath = filePath.toLowerCase();
-  return lowerPath.endsWith(".mp4") || lowerPath.endsWith(".mov") || lowerPath.endsWith(".webm");
-}
-
-function guessExtension(url: string): string {
-  const clean = url.toLowerCase().split("?")[0] ?? "";
-  if (clean.endsWith(".mp4")) return ".mp4";
-  if (clean.endsWith(".mov")) return ".mov";
-  if (clean.endsWith(".webm")) return ".webm";
-  if (clean.endsWith(".jpg") || clean.endsWith(".jpeg")) return ".jpg";
-  if (clean.endsWith(".png")) return ".png";
-  if (clean.includes("video")) return ".mp4";
-  return ".jpg";
+function isVideoByUrl(url: string): boolean {
+  const clean = (url.toLowerCase().split("?")[0] ?? "");
+  return (
+    clean.endsWith(".mp4") ||
+    clean.endsWith(".mov") ||
+    clean.endsWith(".webm") ||
+    clean.includes("/video/") ||
+    clean.includes("video_dashinit")
+  );
 }
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
