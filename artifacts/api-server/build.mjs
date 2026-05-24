@@ -31,6 +31,7 @@ async function buildAll() {
       "*.node",
       "grammy",
       "youtube-dl-exec",
+      "btch-downloader",
       "sharp",
       "better-sqlite3",
       "sqlite3",
