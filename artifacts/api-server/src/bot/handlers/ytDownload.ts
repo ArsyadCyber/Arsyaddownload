@@ -173,8 +173,8 @@ export async function handleResolutionCallback(
       await ctx.api.editMessageText(
         chatId,
         statusMsg.message_id,
-        `❌ *Video terlalu besar\\!*\n\nUkuran \\(${fileSizeMB.toFixed(1)} MB\\) melebihi batas 50 MB Telegram\\.\n\nCoba pilih resolusi yang lebih rendah\\.`,
-        { parse_mode: "MarkdownV2" },
+        `❌ *Video terlalu besar!*\n\nUkuran (${fileSizeMB.toFixed(1)} MB) melebihi batas 50 MB Telegram.\n\nCoba pilih resolusi yang lebih rendah.`,
+        { parse_mode: "Markdown" },
       );
       return;
     }
@@ -182,8 +182,7 @@ export async function handleResolutionCallback(
     await ctx.api.editMessageText(
       chatId,
       statusMsg.message_id,
-      `✅ Download selesai \\(${fileSizeMB.toFixed(1)} MB\\)\\. Mengirim\\.\\.\\.`,
-      { parse_mode: "MarkdownV2" },
+      `✅ Download selesai (${fileSizeMB.toFixed(1)} MB). Mengirim...`,
     );
 
     const caption =
