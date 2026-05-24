@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { bot } from "./bot";
 
 const rawPort = process.env["PORT"];
 
@@ -22,4 +23,10 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+});
+
+bot.start({
+  onStart(botInfo) {
+    logger.info({ username: botInfo.username }, "Telegram bot started");
+  },
 });
