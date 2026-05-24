@@ -141,10 +141,11 @@ export async function handleResolutionCallback(
         audioQuality: 0,
       });
     } else {
+      const h = resolution?.height;
       const format =
-        formatId === "best"
+        formatId === "best" || !h
           ? "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
-          : `${formatId}+bestaudio/bestvideo[height<=${resolution?.height ?? 720}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${resolution?.height ?? 720}][ext=mp4]/best[height<=${resolution?.height ?? 720}]`;
+          : `bestvideo[height=${h}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height=${h}]+bestaudio/best[height<=${h}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${h}]`;
 
       await youtubeDl(session.url, {
         output: outputTemplate,
@@ -219,31 +220,26 @@ function buildResolutions(formats: YtFormat[]): Resolution[] {
   const seen = new Set<string>();
   const result: Resolution[] = [];
 
-  const videoFormats = formats
-    .filter(
-      (f) =>
-        f.vcodec &&
-        f.vcodec !== "none" &&
-        f.height &&
-        f.height > 0 &&
-        (f.ext === "mp4" || f.ext === "webm"),
-    )
-    .sort((a, b) => (b.height ?? 0) - (a.height ?? 0));
+  const availableHeights = new Set(
+    formats
+      .filter((f) => f.vcodec && f.vcodec !== "none" && f.height && f.height > 0)
+      .map((f) => f.height as number),
+  );
 
   const targetHeights = [2160, 1440, 1080, 720, 480, 360, 240, 144];
 
   for (const targetHeight of targetHeights) {
-    const match = videoFormats.find((f) => f.height === targetHeight);
-    if (match && !seen.has(String(targetHeight))) {
+    if (availableHeights.has(targetHeight) && !seen.has(String(targetHeight))) {
       seen.add(String(targetHeight));
-      const label = targetHeight >= 2160
-        ? `4K (${targetHeight}p)`
-        : targetHeight >= 1440
-        ? `2K (${targetHeight}p)`
-        : `${targetHeight}p`;
+      const label =
+        targetHeight >= 2160
+          ? `4K (${targetHeight}p)`
+          : targetHeight >= 1440
+            ? `2K (${targetHeight}p)`
+            : `${targetHeight}p`;
       result.push({
         label,
-        formatId: match.format_id,
+        formatId: String(targetHeight),
         height: targetHeight,
         audioOnly: false,
       });
@@ -301,10 +297,25 @@ function buildErrorMessage(err: unknown): string {
   const msg = err instanceof Error ? err.message : "Terjadi kesalahan tidak dikenal.";
   const lower = msg.toLowerCase();
 
-  if (lower.includes("age") || lower.includes("sign in")) {
+  const isAgeRestricted =
+    lower.includes("age-restricted") ||
+    lower.includes("age restricted") ||
+    lower.includes("confirm your age") ||
+    lower.includes("age limit") ||
+    lower.includes("age verification") ||
+    (lower.includes("sign in") && lower.includes("age"));
+
+  const isPrivate =
+    lower.includes("private video") ||
+    lower.includes("video unavailable") ||
+    lower.includes("video is unavailable") ||
+    lower.includes("has been removed") ||
+    lower.includes("account has been terminated");
+
+  if (isAgeRestricted) {
     return "❌ *Gagal mengunduh.*\n\nVideo ini memiliki batasan usia dan tidak bisa diunduh.";
   }
-  if (lower.includes("private") || lower.includes("unavailable")) {
+  if (isPrivate) {
     return "❌ *Gagal mengunduh.*\n\nVideo ini bersifat privat atau tidak tersedia di wilayah ini.";
   }
 
