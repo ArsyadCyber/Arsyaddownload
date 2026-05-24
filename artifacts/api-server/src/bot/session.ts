@@ -1,3 +1,5 @@
+const TTL_MS = 10 * 60 * 1000;
+
 export interface VideoSession {
   url: string;
   title: string;
@@ -14,20 +16,51 @@ export interface Resolution {
   audioOnly: boolean;
 }
 
-const store = new Map<string, VideoSession>();
-const TTL_MS = 10 * 60 * 1000;
+export interface TikTokSession {
+  title: string;
+  videoWithWatermark: string[];
+  videoNoWatermark: string[];
+  audio: string[];
+  createdAt: number;
+}
+
+function makeStore<T>() {
+  const store = new Map<string, T>();
+  return {
+    save(key: string, value: T) {
+      store.set(key, value);
+      setTimeout(() => store.delete(key), TTL_MS);
+    },
+    get(key: string): T | undefined {
+      return store.get(key);
+    },
+    delete(key: string) {
+      store.delete(key);
+    },
+  };
+}
+
+const ytStore = makeStore<VideoSession>();
+const ttStore = makeStore<TikTokSession>();
 
 export function saveSession(key: string, session: VideoSession): void {
-  store.set(key, session);
-  setTimeout(() => store.delete(key), TTL_MS);
+  ytStore.save(key, session);
 }
-
 export function getSession(key: string): VideoSession | undefined {
-  return store.get(key);
+  return ytStore.get(key);
+}
+export function deleteSession(key: string): void {
+  ytStore.delete(key);
 }
 
-export function deleteSession(key: string): void {
-  store.delete(key);
+export function saveTtSession(key: string, session: TikTokSession): void {
+  ttStore.save(key, session);
+}
+export function getTtSession(key: string): TikTokSession | undefined {
+  return ttStore.get(key);
+}
+export function deleteTtSession(key: string): void {
+  ttStore.delete(key);
 }
 
 export function generateKey(chatId: number, userId: number): string {

@@ -2,9 +2,9 @@ import { Bot, InlineKeyboard } from "grammy";
 import { logger } from "../lib/logger";
 import { handleYtDownload, handleResolutionCallback } from "./handlers/ytDownload";
 import { handleIgDownload } from "./handlers/igDownload";
+import { handleTtDownload, handleTtCallback } from "./handlers/ttDownload";
 
 const token = process.env["TELEGRAM_BOT_TOKEN"];
-
 if (!token) {
   throw new Error("TELEGRAM_BOT_TOKEN environment variable is required.");
 }
@@ -17,28 +17,30 @@ const youtubeRegex =
 const instagramRegex =
   /^(https?:\/\/)?(www\.)?instagram\.com\/(p|reel|reels|tv|stories)\/[\w-]+/i;
 
+const tiktokRegex =
+  /^(https?:\/\/)?(www\.|vm\.|vt\.|m\.)?tiktok\.com\/([@\w.-]+\/video\/\d+|v\/\d+|[\w-]+\/?)/i;
+
 bot.command("start", async (ctx) => {
   const keyboard = new InlineKeyboard()
-    .text("▶️ YT Download", "yt_download")
-    .text("📸 IG Download", "ig_download");
+    .text("▶️ YouTube", "yt_download")
+    .text("📸 Instagram", "ig_download")
+    .text("🎵 TikTok", "tt_download");
 
   await ctx.reply(
-    `Halo, *${ctx.from?.first_name ?? "Pengguna"}*! 👋\n\n` +
+    `Halo, *${ctx.from?.first_name ?? "Pengguna"}*\\! 👋\n\n` +
       `Selamat datang\\! Saya bisa membantu kamu mengunduh media dari:\n\n` +
       `▶️ *YouTube* — Video dengan pilihan resolusi\n` +
-      `📸 *Instagram* — Reels, Post, Foto, Carousel\n\n` +
-      `Pilih fitur di bawah atau langsung kirim link\\!`,
-    {
-      parse_mode: "MarkdownV2",
-      reply_markup: keyboard,
-    },
+      `📸 *Instagram* — Reels, Post, Foto, Carousel\n` +
+      `🎵 *TikTok* — Video dengan/tanpa watermark \\+ Audio\n\n` +
+      `Pilih platform di bawah atau langsung kirim link\\!`,
+    { parse_mode: "MarkdownV2", reply_markup: keyboard },
   );
 });
 
 bot.callbackQuery("yt_download", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply(
-    "▶️ *YouTube Download*\n\nKirimkan link YouTube yang ingin kamu download.\n\nContoh:\n`https://www.youtube.com/watch?v=dQw4w9WgXcQ`\n`https://youtu.be/dQw4w9WgXcQ`",
+    "▶️ *YouTube Download*\n\nKirimkan link YouTube.\n\nContoh:\n`https://www.youtube.com/watch?v=...`\n`https://youtu.be/...`",
     { parse_mode: "Markdown" },
   );
 });
@@ -46,26 +48,45 @@ bot.callbackQuery("yt_download", async (ctx) => {
 bot.callbackQuery("ig_download", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply(
-    "📸 *Instagram Download*\n\nKirimkan link Instagram yang ingin kamu download.\n\nFormat yang didukung:\n• `https://www.instagram.com/p/xxxxx/`\n• `https://www.instagram.com/reel/xxxxx/`\n• `https://www.instagram.com/stories/user/xxxxx/`",
+    "📸 *Instagram Download*\n\nKirimkan link Instagram.\n\nFormat yang didukung:\n• `https://www.instagram.com/p/xxxxx/`\n• `https://www.instagram.com/reel/xxxxx/`\n• `https://www.instagram.com/stories/user/xxxxx/`",
+    { parse_mode: "Markdown" },
+  );
+});
+
+bot.callbackQuery("tt_download", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    "🎵 *TikTok Download*\n\nKirimkan link TikTok.\n\nContoh:\n`https://www.tiktok.com/@user/video/123...`\n`https://vm.tiktok.com/xxxxx/`",
     { parse_mode: "Markdown" },
   );
 });
 
 bot.callbackQuery(/^res:(.+):(.+)$/, async (ctx) => {
   const [, sessionKey, formatId] = ctx.match;
-
   if (!sessionKey || !formatId) {
     await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
     return;
   }
-
   if (formatId === "cancel") {
     await ctx.answerCallbackQuery({ text: "❌ Dibatalkan." });
     await ctx.deleteMessage().catch(() => null);
     return;
   }
-
   await handleResolutionCallback(ctx, sessionKey, formatId);
+});
+
+bot.callbackQuery(/^tt:(.+):(wm|nwm|audio|cancel)$/, async (ctx) => {
+  const [, sessionKey, choice] = ctx.match;
+  if (!sessionKey || !choice) {
+    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
+    return;
+  }
+  if (choice === "cancel") {
+    await ctx.answerCallbackQuery({ text: "❌ Dibatalkan." });
+    await ctx.deleteMessage().catch(() => null);
+    return;
+  }
+  await handleTtCallback(ctx, sessionKey, choice);
 });
 
 bot.on("message:text", async (ctx) => {
@@ -75,14 +96,17 @@ bot.on("message:text", async (ctx) => {
     await handleYtDownload(ctx, text);
     return;
   }
-
   if (instagramRegex.test(text)) {
     await handleIgDownload(ctx, text);
     return;
   }
+  if (tiktokRegex.test(text)) {
+    await handleTtDownload(ctx, text);
+    return;
+  }
 
   await ctx.reply(
-    "Kirimkan link YouTube atau Instagram yang valid, atau ketik /start untuk melihat menu.",
+    "Kirimkan link YouTube, Instagram, atau TikTok yang valid — atau ketik /start untuk melihat menu.",
   );
 });
 
