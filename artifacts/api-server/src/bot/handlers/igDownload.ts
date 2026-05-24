@@ -16,15 +16,29 @@ interface DownloadedMedia {
   isVideo: boolean;
 }
 
+function getIgUrlType(originalUrl: string): "video" | "photo" | "unknown" {
+  const lower = originalUrl.toLowerCase();
+  if (lower.includes("/reel/") || lower.includes("/reels/") || lower.includes("/tv/")) {
+    return "video";
+  }
+  if (lower.includes("/stories/")) {
+    return "video";
+  }
+  return "unknown";
+}
+
 export async function handleIgDownload(ctx: Context, url: string) {
   const statusMsg = await ctx.reply(
     "⏳ Mengambil media Instagram, harap tunggu...",
   );
 
   const chatId = ctx.chat!.id;
+  const urlType = getIgUrlType(url);
 
   try {
     const response = await igdl(url);
+
+    logger.info({ resultCount: response.result?.length, status: response.status, urlType }, "igdl response");
 
     if (!response.status || !response.result || response.result.length === 0) {
       const reason =
@@ -45,7 +59,9 @@ export async function handleIgDownload(ctx: Context, url: string) {
 
     if (total === 1) {
       const item = items[0]!;
-      const media = await downloadToTemp(item.url);
+      const media = await downloadToTemp(item.url, urlType);
+
+      logger.info({ isVideo: media.isVideo, filePath: media.filePath, contentType: media.contentType }, "Downloaded single item");
 
       try {
         if (media.isVideo) {
@@ -71,7 +87,7 @@ export async function handleIgDownload(ctx: Context, url: string) {
 
         try {
           for (const item of chunk) {
-            const media = await downloadToTemp(item.url);
+            const media = await downloadToTemp(item.url, urlType);
             downloaded.push(media);
           }
 
@@ -131,11 +147,15 @@ export async function handleIgDownload(ctx: Context, url: string) {
   }
 }
 
-async function downloadToTemp(url: string): Promise<DownloadedMedia> {
+async function downloadToTemp(
+  url: string,
+  urlTypeHint: "video" | "photo" | "unknown",
+): Promise<DownloadedMedia & { contentType: string }> {
   const res = await fetch(url, {
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      Accept: "*/*",
     },
   });
 
@@ -144,9 +164,22 @@ async function downloadToTemp(url: string): Promise<DownloadedMedia> {
   }
 
   const contentType = res.headers.get("content-type") ?? "";
-  const isVideo = contentType.startsWith("video/") || isVideoByUrl(url);
-  const ext = isVideo ? ".mp4" : ".jpg";
+  const contentLength = Number(res.headers.get("content-length") ?? "0");
 
+  const isVideoByContentType = contentType.startsWith("video/");
+  const isImageByContentType =
+    contentType.startsWith("image/") &&
+    !contentType.includes("image/gif");
+  const isVideoByUrlHint = urlTypeHint === "video";
+  const isVideoByUrlPattern = isVideoUrl(url);
+
+  const isVideo =
+    isVideoByContentType ||
+    isVideoByUrlHint ||
+    isVideoByUrlPattern ||
+    (!isImageByContentType && contentLength > 5 * 1024 * 1024);
+
+  const ext = isVideo ? ".mp4" : ".jpg";
   const fileName = `ig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}${ext}`;
   const filePath = path.join(os.tmpdir(), fileName);
 
@@ -163,17 +196,25 @@ async function downloadToTemp(url: string): Promise<DownloadedMedia> {
     fileStream.on("error", reject);
   });
 
-  return { filePath, isVideo };
+  const stat = fs.statSync(filePath);
+  const fileSizeBytes = stat.size;
+
+  const finalIsVideo =
+    isVideo ||
+    (fileSizeBytes > 5 * 1024 * 1024 && !isImageByContentType);
+
+  return { filePath, isVideo: finalIsVideo, contentType };
 }
 
-function isVideoByUrl(url: string): boolean {
+function isVideoUrl(url: string): boolean {
   const clean = (url.toLowerCase().split("?")[0] ?? "");
   return (
     clean.endsWith(".mp4") ||
     clean.endsWith(".mov") ||
     clean.endsWith(".webm") ||
     clean.includes("/video/") ||
-    clean.includes("video_dashinit")
+    clean.includes("video_dashinit") ||
+    clean.includes("videoplayback")
   );
 }
 
