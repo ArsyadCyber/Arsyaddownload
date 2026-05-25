@@ -20,7 +20,13 @@ interface RawItem {
   type?: string;
   video?: string | string[];
   image?: string | string[];
+  download?: string | string[];
   url?: string;
+}
+
+function pickFirstString(val: string | string[] | undefined): string | undefined {
+  if (!val) return undefined;
+  return Array.isArray(val) ? val[0] : val;
 }
 
 function extractItems(result: unknown): ThreadsMediaItem[] {
@@ -28,16 +34,14 @@ function extractItems(result: unknown): ThreadsMediaItem[] {
 
   const parseOne = (raw: RawItem): ThreadsMediaItem | null => {
     const isVideo = raw.type === "video";
-    let url: string | undefined;
-    if (isVideo) {
-      url = Array.isArray(raw.video) ? raw.video[0] : raw.video;
-    }
-    if (!url) {
-      url = Array.isArray(raw.image) ? raw.image[0] : raw.image;
-      if (!url && Array.isArray(raw.video)) url = raw.video[0];
-      if (!url && typeof raw.video === "string") url = raw.video;
-    }
-    if (!url) url = typeof raw.url === "string" ? raw.url : undefined;
+
+    // Prefer the proxy download URL (avoids CDN 403), fall back to direct URL
+    const downloadUrl = pickFirstString(raw.download);
+    const directUrl = isVideo
+      ? pickFirstString(raw.video)
+      : pickFirstString(raw.image) ?? pickFirstString(raw.video);
+    const url = downloadUrl ?? directUrl ?? pickFirstString(raw.video) ?? pickFirstString(raw.image);
+
     if (!url) return null;
     return { type: isVideo ? "video" : "image", url };
   };
@@ -238,9 +242,12 @@ async function downloadToTemp(
   const filePath = path.join(os.tmpdir(), fileName);
 
   const res = await fetch(url, {
+    redirect: "follow",
     headers: {
       "User-Agent":
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Referer": "https://www.threads.com/",
+      "Accept": "*/*",
     },
   });
 
