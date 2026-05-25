@@ -4,6 +4,7 @@ import { handleYtDownload, handleResolutionCallback } from "./handlers/ytDownloa
 import { handleIgDownload } from "./handlers/igDownload";
 import { handleTtDownload, handleTtCallback } from "./handlers/ttDownload";
 import { handleThreadsDownload, handleThreadsCallback } from "./handlers/threadsDownload";
+import { handleFbDownload, handleFbCallback } from "./handlers/fbDownload";
 
 const token = process.env["TELEGRAM_BOT_TOKEN"];
 if (!token) {
@@ -24,13 +25,18 @@ const tiktokRegex =
 const threadsRegex =
   /^(https?:\/\/)?(www\.)?threads\.(net|com)\/@[\w.-]+\/post\/[\w-]+/i;
 
+const facebookRegex =
+  /^(https?:\/\/)?(www\.|m\.|web\.)?facebook\.com\/(reel\/\d+|watch\/?\?v=\d+|[\w.]+\/videos\/\d+|[\w.]+\/reels\/\d+|share\/(v|r)\/[\w-]+|video\/embed\?video_id=\d+)/i;
+
 bot.command("start", async (ctx) => {
   const keyboard = new InlineKeyboard()
     .text("▶️ YouTube", "yt_download")
     .text("📸 Instagram", "ig_download")
     .row()
     .text("🎵 TikTok", "tt_download")
-    .text("🧵 Threads", "threads_download");
+    .text("🧵 Threads", "threads_download")
+    .row()
+    .text("📘 Facebook", "fb_download");
 
   await ctx.reply(
     `Halo, *${ctx.from?.first_name ?? "Pengguna"}*\\! 👋\n\n` +
@@ -38,7 +44,8 @@ bot.command("start", async (ctx) => {
       `▶️ *YouTube* — Video dengan pilihan resolusi\n` +
       `📸 *Instagram* — Reels, Post, Foto, Carousel\n` +
       `🎵 *TikTok* — Video dengan/tanpa watermark \\+ Audio\n` +
-      `🧵 *Threads* — Video & Foto dari postingan\n\n` +
+      `🧵 *Threads* — Video & Foto dari postingan\n` +
+      `📘 *Facebook* — Reels, Post, & Video publik\n\n` +
       `Pilih platform di bawah atau langsung kirim link\\!`,
     { parse_mode: "MarkdownV2", reply_markup: keyboard },
   );
@@ -72,6 +79,14 @@ bot.callbackQuery("threads_download", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.reply(
     "🧵 *Threads Download*\n\nKirimkan link postingan Threads.\n\nContoh:\n`https://www.threads.net/@user/post/xxxxx`",
+    { parse_mode: "Markdown" },
+  );
+});
+
+bot.callbackQuery("fb_download", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.reply(
+    "📘 *Facebook Download*\n\nKirimkan link video Facebook (publik).\n\nFormat yang didukung:\n• `https://www.facebook.com/reel/12345...`\n• `https://www.facebook.com/watch?v=12345...`\n• `https://www.facebook.com/user/videos/12345...`\n\n⚠️ Hanya video publik yang dapat diunduh.",
     { parse_mode: "Markdown" },
   );
 });
@@ -113,6 +128,15 @@ bot.callbackQuery(/^thr:(.+):(all|cancel|\d+)$/, async (ctx) => {
   await handleThreadsCallback(ctx, sessionKey, choice);
 });
 
+bot.callbackQuery(/^fb:(.+):(cancel|\d+)$/, async (ctx) => {
+  const [, sessionKey, choice] = ctx.match;
+  if (!sessionKey || !choice) {
+    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
+    return;
+  }
+  await handleFbCallback(ctx, sessionKey, choice);
+});
+
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
 
@@ -132,9 +156,13 @@ bot.on("message:text", async (ctx) => {
     await handleThreadsDownload(ctx, text);
     return;
   }
+  if (facebookRegex.test(text)) {
+    await handleFbDownload(ctx, text);
+    return;
+  }
 
   await ctx.reply(
-    "Kirimkan link YouTube, Instagram, TikTok, atau Threads yang valid — atau ketik /start untuk melihat menu.",
+    "Kirimkan link YouTube, Instagram, TikTok, Threads, atau Facebook yang valid — atau ketik /start untuk melihat menu.",
   );
 });
 

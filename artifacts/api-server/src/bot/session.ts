@@ -85,6 +85,28 @@ export function deleteThrSession(key: string): void {
   thrStore.delete(key);
 }
 
+export interface FbMediaItem {
+  url: string;
+  label: string;
+}
+
+export interface FbSession {
+  items: FbMediaItem[];
+  createdAt: number;
+}
+
+const fbStore = makeStore<FbSession>();
+
+export function saveFbSession(key: string, session: FbSession): void {
+  fbStore.save(key, session);
+}
+export function getFbSession(key: string): FbSession | undefined {
+  return fbStore.get(key);
+}
+export function deleteFbSession(key: string): void {
+  fbStore.delete(key);
+}
+
 export function generateKey(chatId: number, userId: number): string {
   return `${chatId}_${userId}_${Date.now()}`;
 }
