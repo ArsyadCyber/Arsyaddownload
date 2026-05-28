@@ -12,6 +12,18 @@ import {
   handleGameTextInput,
   hasActiveGameSession,
 } from "./handlers/gameCheckHandler";
+import {
+  handleOngkirMenu,
+  handleOngkirTextInput,
+  handleOngkirCityCallback,
+  handleOngkirCancel,
+  hasActiveOngkirSession,
+} from "./handlers/ongkirHandler";
+import {
+  handleResiMenu,
+  handleResiTextInput,
+  hasActiveResiSession,
+} from "./handlers/resiHandler";
 
 const token = process.env["TELEGRAM_BOT_TOKEN"];
 if (!token) {
@@ -44,7 +56,10 @@ bot.command("start", async (ctx) => {
     .text("🧵 Threads", "threads_download")
     .row()
     .text("📘 Facebook", "fb_download")
-    .text("🎮 Cek ID Game", "game_check");
+    .text("🎮 Cek ID Game", "game_check")
+    .row()
+    .text("📦 Cek Ongkir", "ongkir_start")
+    .text("📬 Cek Resi", "resi_start");
 
   await ctx.reply(
     `Halo, *${ctx.from?.first_name ?? "Pengguna"}*\\! 👋\n\n` +
@@ -54,7 +69,9 @@ bot.command("start", async (ctx) => {
       `🎵 *TikTok* — Video dengan/tanpa watermark \\+ Audio\n` +
       `🧵 *Threads* — Video & Foto dari postingan\n` +
       `📘 *Facebook* — Reels, Post, & Video publik\n` +
-      `🎮 *Cek ID Game* — Cek username dari 15 game\\!\n\n` +
+      `🎮 *Cek ID Game* — Cek username dari 15 game\\!\n` +
+      `📦 *Cek Ongkir* — Tarif semua ekspedisi\n` +
+      `📬 *Cek Resi* — Lacak paket kamu\n\n` +
       `Pilih fitur di bawah atau langsung kirim link\\!`,
     { parse_mode: "MarkdownV2", reply_markup: keyboard },
   );
@@ -104,6 +121,16 @@ bot.callbackQuery("game_check", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.deleteMessage().catch(() => null);
   await handleGameCheckMenu(ctx);
+});
+
+bot.callbackQuery("ongkir_start", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await handleOngkirMenu(ctx);
+});
+
+bot.callbackQuery("resi_start", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await handleResiMenu(ctx);
 });
 
 bot.callbackQuery(/^game:select:(.+)$/, async (ctx) => {
@@ -165,16 +192,47 @@ bot.callbackQuery(/^fb:(.+):(cancel|\d+)$/, async (ctx) => {
   await handleFbCallback(ctx, sessionKey, choice);
 });
 
+bot.callbackQuery(/^ongkir:city:(\d+):(.+)$/, async (ctx) => {
+  const [, cityId, cityNameEncoded] = ctx.match;
+  if (!cityId || !cityNameEncoded) {
+    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
+    return;
+  }
+  await handleOngkirCityCallback(ctx, cityId, cityNameEncoded);
+});
+
+bot.callbackQuery("ongkir:cancel", async (ctx) => {
+  await handleOngkirCancel(ctx);
+});
+
 bot.command("cekid", async (ctx) => {
   await handleGameCheckMenu(ctx);
+});
+
+bot.command("cekongkir", async (ctx) => {
+  await handleOngkirMenu(ctx);
+});
+
+bot.command("cekresi", async (ctx) => {
+  await handleResiMenu(ctx);
 });
 
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
 
-  // Game ID check session takes priority over link routing
+  // Session handlers take priority (in order of registration)
   if (hasActiveGameSession(ctx.chat.id)) {
     const handled = await handleGameTextInput(ctx);
+    if (handled) return;
+  }
+
+  if (hasActiveOngkirSession(ctx.chat.id)) {
+    const handled = await handleOngkirTextInput(ctx);
+    if (handled) return;
+  }
+
+  if (hasActiveResiSession(ctx.chat.id)) {
+    const handled = await handleResiTextInput(ctx);
     if (handled) return;
   }
 
@@ -200,7 +258,10 @@ bot.on("message:text", async (ctx) => {
   }
 
   await ctx.reply(
-    "Kirimkan link YouTube, Instagram, TikTok, Threads, atau Facebook yang valid — atau ketik /start untuk melihat menu.\n\n🎮 Untuk cek ID game ketik /cekid",
+    "Kirimkan link YouTube, Instagram, TikTok, Threads, atau Facebook yang valid — atau ketik /start untuk melihat menu.\n\n" +
+    "🎮 Cek ID game: /cekid\n" +
+    "📦 Cek ongkir: /cekongkir\n" +
+    "📬 Cek resi: /cekresi",
   );
 });
 

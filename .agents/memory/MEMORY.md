@@ -1,0 +1,2 @@
+- [Python scraper path from dist](python-scraper-path.md) — esbuild bundles to dist/, Python scripts path must be `../src/bot/utils/` not `../../../src/bot/utils/`
+- [Ongkir & Resi data sources](ongkir-resi-sources.md) — ongkoskirim.id (PHP AJAX) for cost, Cainiao global for tracking; RapidAPI plan gratis tidak cover /tracking & /shipping-cost
