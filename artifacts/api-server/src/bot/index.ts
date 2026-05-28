@@ -5,6 +5,13 @@ import { handleIgDownload } from "./handlers/igDownload";
 import { handleTtDownload, handleTtCallback } from "./handlers/ttDownload";
 import { handleThreadsDownload, handleThreadsCallback } from "./handlers/threadsDownload";
 import { handleFbDownload, handleFbCallback } from "./handlers/fbDownload";
+import {
+  handleGameCheckMenu,
+  handleGameSelectCallback,
+  handleGameCancelCallback,
+  handleGameTextInput,
+  hasActiveGameSession,
+} from "./handlers/gameCheckHandler";
 
 const token = process.env["TELEGRAM_BOT_TOKEN"];
 if (!token) {
@@ -36,17 +43,19 @@ bot.command("start", async (ctx) => {
     .text("🎵 TikTok", "tt_download")
     .text("🧵 Threads", "threads_download")
     .row()
-    .text("📘 Facebook", "fb_download");
+    .text("📘 Facebook", "fb_download")
+    .text("🎮 Cek ID Game", "game_check");
 
   await ctx.reply(
     `Halo, *${ctx.from?.first_name ?? "Pengguna"}*\\! 👋\n\n` +
-      `Selamat datang\\! Saya bisa membantu kamu mengunduh media dari:\n\n` +
+      `Selamat datang\\! Saya bisa membantu kamu:\n\n` +
       `▶️ *YouTube* — Video dengan pilihan resolusi\n` +
       `📸 *Instagram* — Reels, Post, Foto, Carousel\n` +
       `🎵 *TikTok* — Video dengan/tanpa watermark \\+ Audio\n` +
       `🧵 *Threads* — Video & Foto dari postingan\n` +
-      `📘 *Facebook* — Reels, Post, & Video publik\n\n` +
-      `Pilih platform di bawah atau langsung kirim link\\!`,
+      `📘 *Facebook* — Reels, Post, & Video publik\n` +
+      `🎮 *Cek ID Game* — Cek username dari 15 game\\!\n\n` +
+      `Pilih fitur di bawah atau langsung kirim link\\!`,
     { parse_mode: "MarkdownV2", reply_markup: keyboard },
   );
 });
@@ -89,6 +98,25 @@ bot.callbackQuery("fb_download", async (ctx) => {
     "📘 *Facebook Download*\n\nKirimkan link video Facebook (publik).\n\nFormat yang didukung:\n• `https://www.facebook.com/reel/12345...`\n• `https://www.facebook.com/watch?v=12345...`\n• `https://www.facebook.com/user/videos/12345...`\n\n⚠️ Hanya video publik yang dapat diunduh.",
     { parse_mode: "Markdown" },
   );
+});
+
+bot.callbackQuery("game_check", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await ctx.deleteMessage().catch(() => null);
+  await handleGameCheckMenu(ctx);
+});
+
+bot.callbackQuery(/^game:select:(.+)$/, async (ctx) => {
+  const typeName = ctx.match[1];
+  if (!typeName) {
+    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
+    return;
+  }
+  await handleGameSelectCallback(ctx, typeName);
+});
+
+bot.callbackQuery("game:cancel", async (ctx) => {
+  await handleGameCancelCallback(ctx);
 });
 
 bot.callbackQuery(/^res:(.+):(.+)$/, async (ctx) => {
@@ -137,8 +165,18 @@ bot.callbackQuery(/^fb:(.+):(cancel|\d+)$/, async (ctx) => {
   await handleFbCallback(ctx, sessionKey, choice);
 });
 
+bot.command("cekid", async (ctx) => {
+  await handleGameCheckMenu(ctx);
+});
+
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
+
+  // Game ID check session takes priority over link routing
+  if (hasActiveGameSession(ctx.chat.id)) {
+    const handled = await handleGameTextInput(ctx);
+    if (handled) return;
+  }
 
   if (youtubeRegex.test(text)) {
     await handleYtDownload(ctx, text);
@@ -162,7 +200,7 @@ bot.on("message:text", async (ctx) => {
   }
 
   await ctx.reply(
-    "Kirimkan link YouTube, Instagram, TikTok, Threads, atau Facebook yang valid — atau ketik /start untuk melihat menu.",
+    "Kirimkan link YouTube, Instagram, TikTok, Threads, atau Facebook yang valid — atau ketik /start untuk melihat menu.\n\n🎮 Untuk cek ID game ketik /cekid",
   );
 });
 
