@@ -4,9 +4,12 @@ Track Indonesian shipping resi via multiple sources.
 Usage:
   python3 resiScrape.py <tracking_number> [courier_code]
 
-courier_code (optional): jne, jnt, sicepat, pos, tiki, wahana, anteraja, etc.
+courier_code (optional): jne, jnt, sicepat, pos, tiki, wahana, anteraja, spx, etc.
+Priority:
+  1. Binderbyte API (if BINDERBYTE_API_KEY env var is set) — supports ALL Indonesian couriers
+  2. Cainiao Global (free, works for couriers in Cainiao network)
 """
-import sys, json, urllib.request, urllib.parse, ssl, re, html
+import sys, json, os, urllib.request, urllib.parse, ssl, re, html
 
 ctx = ssl.create_default_context()
 ctx.check_hostname = False
@@ -18,8 +21,113 @@ HEADERS = {
     "Accept-Language": "id-ID,id;q=0.9,en;q=0.8",
 }
 
+# Binderbyte courier code mapping (AWB prefix → binderbyte courier code)
+# Full list: https://api.binderbyte.com/v1/couriers
+BINDERBYTE_COURIER_MAP = {
+    "spx": "spx",          # Shopee Express
+    "jnt": "jnt",          # J&T Express
+    "jnec": "jne",         # JNE
+    "jne": "jne",          # JNE
+    "sicepat": "sicepat",  # SiCepat
+    "sce": "sicepat",      # SiCepat
+    "anteraja": "anteraja",
+    "ant": "anteraja",
+    "pos": "pos",          # Pos Indonesia
+    "tiki": "tiki",        # TIKI
+    "wahana": "wahana",    # Wahana
+    "ninja": "ninja",      # Ninja Xpress
+    "lion": "lion",        # Lion Parcel
+    "lp": "lion",          # Lion Parcel
+    "jx": "jnt",           # J&T TikTok = J&T
+    "jp": "jnt",           # J&T Express
+}
+
+def detect_courier(awb: str) -> tuple[str, str]:
+    """
+    Guess courier from AWB pattern.
+    Returns (display_name, binderbyte_code).
+    """
+    awb_up = awb.upper()
+    # Shopee Express Indonesia: SPXID...
+    if awb_up.startswith("SPXID") or awb_up.startswith("SPX"):
+        return ("Shopee Express (SPX)", "spx")
+    # J&T Express: JX..., JP..., JTP...
+    if re.match(r'^JX\d', awb_up) or awb_up.startswith("JP") or awb_up.startswith("JTP"):
+        return ("J&T Express", "jnt")
+    # JNE: CGKE..., JNEP...
+    if awb_up.startswith("CGKE") or awb_up.startswith("JNEP") or awb_up.startswith("JNE"):
+        return ("JNE", "jne")
+    # SiCepat: BEST..., SCE..., 000...
+    if awb_up.startswith("BEST") or awb_up.startswith("SCE") or re.match(r'^000\d', awb_up):
+        return ("SiCepat", "sicepat")
+    # TIKI: 10 digit number
+    if re.match(r'^\d{10}$', awb_up):
+        return ("TIKI", "tiki")
+    # Lion Parcel: LP...
+    if awb_up.startswith("LP"):
+        return ("Lion Parcel", "lion")
+    # Anteraja: ANT...
+    if awb_up.startswith("ANT"):
+        return ("Anteraja", "anteraja")
+    # Ninja Xpress: NVX...
+    if awb_up.startswith("NVX") or awb_up.startswith("NINJA"):
+        return ("Ninja Xpress", "ninja")
+    # Pos Indonesia: EE/RR... or 8/9 digit number
+    if re.match(r'^[A-Z]{2}\d{8}ID$', awb_up):
+        return ("Pos Indonesia", "pos")
+    # SiCepat also: numeric patterns
+    if re.match(r'^\d{12,}$', awb_up):
+        return ("SiCepat / J&T", "sicepat")
+    return ("Unknown", "")
+
+def track_via_binderbyte(awb: str, courier_code: str = "") -> dict | None:
+    """
+    Track via Binderbyte API (free 100 req/day, supports all Indonesian couriers).
+    Requires BINDERBYTE_API_KEY environment variable.
+    """
+    api_key = os.environ.get("BINDERBYTE_API_KEY", "").strip()
+    if not api_key:
+        return None
+
+    # If no courier code given, detect it
+    if not courier_code:
+        _, courier_code = detect_courier(awb)
+    if not courier_code:
+        return None
+
+    url = f"https://api.binderbyte.com/v1/track?api_key={urllib.parse.quote(api_key)}&courier={urllib.parse.quote(courier_code)}&awb={urllib.parse.quote(awb)}"
+    req = urllib.request.Request(url, headers=HEADERS)
+    try:
+        resp = urllib.request.urlopen(req, timeout=15, context=ctx).read()
+        d = json.loads(resp)
+        if d.get("status") != 200:
+            return None
+        data = d.get("data", {})
+        summary = data.get("summary", {})
+        history = data.get("history", [])
+
+        courier_name = summary.get("courier_name", courier_code.upper())
+        status = summary.get("status", "")
+        events = []
+        for ev in history:
+            events.append({
+                "time": ev.get("date", ""),
+                "desc": ev.get("desc", ""),
+                "location": ev.get("location", ""),
+            })
+
+        return {
+            "source": "Binderbyte",
+            "awb": awb,
+            "courier": courier_name,
+            "status": status,
+            "events": events,
+        }
+    except Exception:
+        return None
+
 def track_via_cainiao(awb: str) -> dict | None:
-    """Try Cainiao global tracking (works from Replit)."""
+    """Try Cainiao global tracking (works from Replit, but limited to Cainiao network)."""
     url = f"https://global.cainiao.com/global/detail.json?mailNos={urllib.parse.quote(awb)}&lang=id-ID"
     req = urllib.request.Request(url, headers={**HEADERS, "Referer": "https://global.cainiao.com/"})
     try:
@@ -48,94 +156,51 @@ def track_via_cainiao(awb: str) -> dict | None:
     except Exception:
         return None
 
-def track_via_ongkoskirim(awb: str) -> dict | None:
-    """Try ongkoskirim.id tracking (same domain, try track submit)."""
-    data = urllib.parse.urlencode({"submit": "track", "resi": awb}).encode()
-    hdrs = {**HEADERS, "Content-Type": "application/x-www-form-urlencoded", "Referer": "https://ongkoskirim.id/"}
-    req = urllib.request.Request("https://ongkoskirim.id/", data=data, headers=hdrs)
-    try:
-        resp = urllib.request.urlopen(req, timeout=10, context=ctx).read().decode(errors="ignore")
-        if resp and resp.strip() != "null" and resp.strip() != "":
-            d = json.loads(resp)
-            if d and isinstance(d, dict) and d.get("manifest"):
-                return {"source": "OngkosKirim", "awb": awb, "status": d.get("status",""), "events": d.get("manifest", [])}
-    except Exception:
-        pass
-    return None
-
-COURIER_PAGE_MAP = {
-    "jne": ("https://cekresi.jne.co.id/", "check_awb", "cekresi.jne.co.id"),
-}
-
-def track_via_kurir_website(awb: str, courier: str) -> dict | None:
-    """Scrape kurir website result page (limited support)."""
-    return None  # Placeholder - most sites require JS rendering
-
-def detect_courier(awb: str) -> str:
-    """Guess courier from AWB pattern."""
-    awb_up = awb.upper()
-    if awb_up.startswith("JNE") or awb_up.startswith("CGKE") or awb_up.startswith("JNEP"):
-        return "JNE"
-    if awb_up.startswith("JP") or awb_up.startswith("JTP"):
-        return "J&T"
-    if awb_up.startswith("BEST") or awb_up.startswith("SCE") or re.match(r'^000\d', awb):
-        return "SiCepat"
-    if awb_up.startswith("TIKI") or re.match(r'^\d{10,12}$', awb) and awb.startswith("00"):
-        return "TIKI"
-    if awb_up.startswith("LP") or re.match(r'^\d{10}$', awb):
-        return "Lion Parcel"
-    if awb_up.startswith("ANT"):
-        return "Anteraja"
-    return "Unknown"
-
-def format_result(result: dict) -> str:
-    """Format tracking result for Telegram."""
-    events = result.get("events", [])
-    courier = result.get("courier", "")
-    status = result.get("status", "")
-    awb = result.get("awb", "")
-    source = result.get("source", "")
-
-    lines = []
-    if events:
-        for ev in events[:10]:  # max 10 events
-            t = ev.get("time", "")
-            d = ev.get("desc", "")
-            loc = ev.get("location", "")
-            if d:
-                lines.append(f"🕐 {t}\n   {d}" + (f"\n   📍 {loc}" if loc else ""))
-    return json.dumps({
-        "awb": awb,
-        "courier": courier,
-        "status": status,
-        "source": source,
-        "events_count": len(events),
-        "events": events[:10],
-        "formatted": lines,
-    })
-
 def main():
     if len(sys.argv) < 2:
-        print(json.dumps({"error": "Usage: resiScrape.py <awb> [courier]"}))
+        print(json.dumps({"error": "Usage: resiScrape.py <awb> [courier_code]"}))
         return
 
     awb = sys.argv[1].strip()
-    courier = sys.argv[2].strip() if len(sys.argv) > 2 else ""
+    courier_arg = sys.argv[2].strip().lower() if len(sys.argv) > 2 else ""
 
-    # Try sources in order
-    result = track_via_cainiao(awb)
+    detected_name, detected_code = detect_courier(awb)
+    courier_code = courier_arg or detected_code
+
+    # 1. Try Binderbyte (if API key is set)
+    result = track_via_binderbyte(awb, courier_code)
+
+    # 2. Fallback: Cainiao (free, but only works for couriers in their network)
     if not result:
-        result = track_via_ongkoskirim(awb)
+        result = track_via_cainiao(awb)
 
     if result:
-        print(format_result(result))
+        events = result.get("events", [])
+        print(json.dumps({
+            "awb": awb,
+            "courier": result.get("courier") or detected_name,
+            "status": result.get("status", ""),
+            "source": result.get("source", ""),
+            "events_count": len(events),
+            "events": events[:10],
+        }))
     else:
-        detected = detect_courier(awb)
+        # Check if binderbyte key is missing — give better error message
+        has_key = bool(os.environ.get("BINDERBYTE_API_KEY", "").strip())
+        if not has_key and detected_code in ("spx", "jnt"):
+            msg = (
+                f"Kurir {detected_name} tidak dapat dilacak tanpa API key Binderbyte. "
+                "Minta admin bot untuk mengatur BINDERBYTE_API_KEY."
+            )
+        else:
+            msg = f"Resi tidak ditemukan. Pastikan nomor resi benar dan sudah diproses oleh {detected_name}."
+
         print(json.dumps({
             "error": "not_found",
             "awb": awb,
-            "detected_courier": detected,
-            "message": f"Resi tidak ditemukan. Pastikan nomor resi benar dan pengiriman sudah diproses oleh {detected}."
+            "detected_courier": detected_name,
+            "needs_api_key": not has_key,
+            "message": msg,
         }))
 
 if __name__ == "__main__":

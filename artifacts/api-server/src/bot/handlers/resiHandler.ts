@@ -8,7 +8,11 @@ const SCRIPT_DIR = path.resolve(__dirname, "../src/bot/utils");
 function runPython(script: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     const scriptPath = path.join(SCRIPT_DIR, script);
-    const proc = spawn("python3", [scriptPath, ...args]);
+    const env = {
+      ...process.env,
+      ...(process.env.BINDERBYTE_API_KEY ? { BINDERBYTE_API_KEY: process.env.BINDERBYTE_API_KEY } : {}),
+    };
+    const proc = spawn("python3", [scriptPath, ...args], { env });
     let out = "";
     let err = "";
     proc.stdout.on("data", (d) => (out += d));
@@ -81,6 +85,7 @@ interface TrackResult {
   formatted?: string[];
   error?: string;
   detected_courier?: string;
+  needs_api_key?: boolean;
   message?: string;
 }
 
@@ -109,12 +114,16 @@ export async function handleResiTextInput(ctx: Context): Promise<boolean> {
       if (result.error) {
         const detectedCourier = result.detected_courier || "Unknown";
         const kb = new InlineKeyboard().text("🔄 Cek Resi Lain", "resi_start");
+        const needsKey = result.needs_api_key;
         await ctx.reply(
           `❌ *Resi Tidak Ditemukan*\n\n` +
           `📦 Nomor: \`${awb}\`\n` +
-          `🚚 Terdeteksi: ${detectedCourier}\n\n` +
-          `${result.message || "Pastikan nomor resi benar dan pengiriman sudah diproses."}`,
-          { parse_mode: "Markdown", reply_markup: kb }
+          `🚚 Kurir Terdeteksi: ${detectedCourier}\n\n` +
+          `${result.message || "Pastikan nomor resi benar dan pengiriman sudah diproses."}\n\n` +
+          (needsKey
+            ? `💡 _Untuk melacak SPX & J\\&T, bot perlu API key Binderbyte\\. Hubungi admin\\._`
+            : `💡 _Coba cek langsung di app Shopee/TikTok jika resi baru dibuat\\._`),
+          { parse_mode: "MarkdownV2", reply_markup: kb }
         );
         return true;
       }
