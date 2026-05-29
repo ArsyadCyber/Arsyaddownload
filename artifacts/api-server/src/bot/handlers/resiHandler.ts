@@ -132,33 +132,42 @@ export async function handleResiTextInput(ctx: Context): Promise<boolean> {
       const kb = new InlineKeyboard().text("🔄 Cek Resi Lain", "resi_start");
 
       if (events.length === 0) {
+        const c2 = (result.courier || "Tidak diketahui").replace(/[*_`[\]()~>#+=|{}.!\\-]/g, "\\$&");
+        const s2 = (result.status || "Belum ada data").replace(/[*_`[\]()~>#+=|{}.!\\-]/g, "\\$&");
         await ctx.reply(
           `📬 *Hasil Lacak Resi*\n\n` +
           `📦 Nomor: \`${awb}\`\n` +
-          `🚚 Kurir: ${result.courier || "Tidak diketahui"}\n` +
-          `📊 Status: ${result.status || "Belum ada data"}\n\n` +
-          `ℹ️ Belum ada data perjalanan. Mungkin baru diproses.`,
-          { parse_mode: "Markdown", reply_markup: kb }
+          `🚚 Kurir: ${c2}\n` +
+          `📊 Status: ${s2}\n\n` +
+          `ℹ️ Belum ada data perjalanan\\. Mungkin baru diproses\\.`,
+          { parse_mode: "MarkdownV2", reply_markup: kb }
         );
         return true;
       }
 
       const eventLines = events.slice(0, 8).map((ev) => {
-        const t = ev.time ? `🕐 *${ev.time}*` : "";
+        const t = ev.time ? `🕐 ${ev.time}` : "";
         const d = ev.desc ? `   └ ${ev.desc}` : "";
         const loc = ev.location ? `   📍 ${ev.location}` : "";
         return [t, d, loc].filter(Boolean).join("\n");
       });
 
+      const statusText = (result.status || events[0]?.desc || "-").replace(/[*_`[\]()~>#+=|{}.!\\-]/g, "\\$&");
+      const courierText = (result.courier || "Terdeteksi otomatis").replace(/[*_`[\]()~>#+=|{}.!\\-]/g, "\\$&");
+      const sourceText = (result.source || "Global Tracking").replace(/[*_`[\]()~>#+=|{}.!\\-]/g, "\\$&");
+      const eventsText = eventLines
+        .map((line) => line.replace(/[*_`[\]()~>#+=|{}.!\\-]/g, "\\$&"))
+        .join("\n\n");
+
       await ctx.reply(
         `📬 *Hasil Lacak Resi*\n\n` +
         `📦 No Resi: \`${awb}\`\n` +
-        `🚚 Kurir: ${result.courier || "Terdeteksi otomatis"}\n` +
-        `📊 Status Terakhir: *${result.status || events[0]?.desc || "-"}*\n` +
+        `🚚 Kurir: ${courierText}\n` +
+        `📊 Status Terakhir: *${statusText}*\n` +
         `📋 Total Update: ${result.events_count || events.length}\n\n` +
-        `*Riwayat Perjalanan:*\n${eventLines.join("\n\n")}\n\n` +
-        `_Sumber: ${result.source || "Global Tracking"}_`,
-        { parse_mode: "Markdown", reply_markup: kb }
+        `*Riwayat Perjalanan:*\n${eventsText}\n\n` +
+        `_Sumber: ${sourceText}_`,
+        { parse_mode: "MarkdownV2", reply_markup: kb }
       );
     } catch (e) {
       await ctx.api.deleteMessage(chatId, statusMsg.message_id).catch(() => null);
