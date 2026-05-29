@@ -24,6 +24,24 @@ import {
   handleResiTextInput,
   hasActiveResiSession,
 } from "./handlers/resiHandler";
+import {
+  handleShalatMenu,
+  handleProvPageCb,
+  handleProvSelectCb,
+  handleKotaPageCb,
+  handleKotaSelectCb,
+  handleBackToProvCb,
+  handleCancelCb,
+  handleMenuCb,
+  handleTomorrowCb,
+  handleChangeCb,
+  handleNotifMenuCb,
+  handleNotifToggleCb,
+  handleNotifSaveCb,
+  handleNotifOffCb,
+  hasActiveShalatSession,
+  startShalatScheduler,
+} from "./handlers/shalatHandler";
 
 const token = process.env["TELEGRAM_BOT_TOKEN"];
 if (!token) {
@@ -32,20 +50,21 @@ if (!token) {
 
 export const bot = new Bot(token);
 
+// Start prayer time notification scheduler
+startShalatScheduler(bot);
+
 const youtubeRegex =
   /^(https?:\/\/)?(www\.)?(youtube\.com\/(watch\?v=|shorts\/|embed\/)|youtu\.be\/)[\w-]+/i;
-
 const instagramRegex =
   /^(https?:\/\/)?(www\.)?instagram\.com\/(p|reel|reels|tv|stories)\/[\w-]+/i;
-
 const tiktokRegex =
   /^(https?:\/\/)?(www\.|vm\.|vt\.|m\.)?tiktok\.com\/([@\w.-]+\/video\/\d+|v\/\d+|[\w-]+\/?)/i;
-
 const threadsRegex =
   /^(https?:\/\/)?(www\.)?threads\.(net|com)\/@[\w.-]+\/post\/[\w-]+/i;
-
 const facebookRegex =
   /^(https?:\/\/)?(www\.|m\.|web\.)?facebook\.com\/(reel\/\d+|watch\/?\?v=\d+|[\w.]+\/videos\/\d+|[\w.]+\/reels\/\d+|share\/(v|r)\/[\w-]+|video\/embed\?video_id=\d+)/i;
+
+// ─── /start ────────────────────────────────────────────────────────────────
 
 bot.command("start", async (ctx) => {
   const keyboard = new InlineKeyboard()
@@ -59,7 +78,9 @@ bot.command("start", async (ctx) => {
     .text("🎮 Cek ID Game", "game_check")
     .row()
     .text("📦 Cek Ongkir", "ongkir_start")
-    .text("📬 Cek Resi", "resi_start");
+    .text("📬 Cek Resi", "resi_start")
+    .row()
+    .text("🕌 Jadwal Sholat", "shalat_start");
 
   await ctx.reply(
     `Halo, *${ctx.from?.first_name ?? "Pengguna"}*\\! 👋\n\n` +
@@ -71,11 +92,14 @@ bot.command("start", async (ctx) => {
       `📘 *Facebook* — Reels, Post, & Video publik\n` +
       `🎮 *Cek ID Game* — Cek username dari 15 game\\!\n` +
       `📦 *Cek Ongkir* — Tarif semua ekspedisi\n` +
-      `📬 *Cek Resi* — Lacak paket kamu\n\n` +
+      `📬 *Cek Resi* — Lacak paket kamu\n` +
+      `🕌 *Jadwal Sholat* — Jadwal & pengingat adzan\n\n` +
       `Pilih fitur di bawah atau langsung kirim link\\!`,
     { parse_mode: "MarkdownV2", reply_markup: keyboard },
   );
 });
+
+// ─── Download callbacks ────────────────────────────────────────────────────
 
 bot.callbackQuery("yt_download", async (ctx) => {
   await ctx.answerCallbackQuery();
@@ -117,28 +141,17 @@ bot.callbackQuery("fb_download", async (ctx) => {
   );
 });
 
+// ─── Game check callbacks ─────────────────────────────────────────────────
+
 bot.callbackQuery("game_check", async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.deleteMessage().catch(() => null);
   await handleGameCheckMenu(ctx);
 });
 
-bot.callbackQuery("ongkir_start", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await handleOngkirMenu(ctx);
-});
-
-bot.callbackQuery("resi_start", async (ctx) => {
-  await ctx.answerCallbackQuery();
-  await handleResiMenu(ctx);
-});
-
 bot.callbackQuery(/^game:select:(.+)$/, async (ctx) => {
   const typeName = ctx.match[1];
-  if (!typeName) {
-    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
-    return;
-  }
+  if (!typeName) { await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." }); return; }
   await handleGameSelectCallback(ctx, typeName);
 });
 
@@ -146,12 +159,11 @@ bot.callbackQuery("game:cancel", async (ctx) => {
   await handleGameCancelCallback(ctx);
 });
 
+// ─── Resolution / media callbacks ─────────────────────────────────────────
+
 bot.callbackQuery(/^res:(.+):(.+)$/, async (ctx) => {
   const [, sessionKey, formatId] = ctx.match;
-  if (!sessionKey || !formatId) {
-    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
-    return;
-  }
+  if (!sessionKey || !formatId) { await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." }); return; }
   if (formatId === "cancel") {
     await ctx.answerCallbackQuery({ text: "❌ Dibatalkan." });
     await ctx.deleteMessage().catch(() => null);
@@ -162,10 +174,7 @@ bot.callbackQuery(/^res:(.+):(.+)$/, async (ctx) => {
 
 bot.callbackQuery(/^tt:(.+):(wm|nwm|audio|cancel)$/, async (ctx) => {
   const [, sessionKey, choice] = ctx.match;
-  if (!sessionKey || !choice) {
-    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
-    return;
-  }
+  if (!sessionKey || !choice) { await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." }); return; }
   if (choice === "cancel") {
     await ctx.answerCallbackQuery({ text: "❌ Dibatalkan." });
     await ctx.deleteMessage().catch(() => null);
@@ -176,28 +185,26 @@ bot.callbackQuery(/^tt:(.+):(wm|nwm|audio|cancel)$/, async (ctx) => {
 
 bot.callbackQuery(/^thr:(.+):(all|cancel|\d+)$/, async (ctx) => {
   const [, sessionKey, choice] = ctx.match;
-  if (!sessionKey || !choice) {
-    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
-    return;
-  }
+  if (!sessionKey || !choice) { await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." }); return; }
   await handleThreadsCallback(ctx, sessionKey, choice);
 });
 
 bot.callbackQuery(/^fb:(.+):(cancel|\d+)$/, async (ctx) => {
   const [, sessionKey, choice] = ctx.match;
-  if (!sessionKey || !choice) {
-    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
-    return;
-  }
+  if (!sessionKey || !choice) { await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." }); return; }
   await handleFbCallback(ctx, sessionKey, choice);
+});
+
+// ─── Ongkir callbacks ─────────────────────────────────────────────────────
+
+bot.callbackQuery("ongkir_start", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await handleOngkirMenu(ctx);
 });
 
 bot.callbackQuery(/^ongkir:city:(\d+):(.+)$/, async (ctx) => {
   const [, cityId, cityNameEncoded] = ctx.match;
-  if (!cityId || !cityNameEncoded) {
-    await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." });
-    return;
-  }
+  if (!cityId || !cityNameEncoded) { await ctx.answerCallbackQuery({ text: "❌ Data tidak valid." }); return; }
   await handleOngkirCityCallback(ctx, cityId, cityNameEncoded);
 });
 
@@ -205,22 +212,98 @@ bot.callbackQuery("ongkir:cancel", async (ctx) => {
   await handleOngkirCancel(ctx);
 });
 
-bot.command("cekid", async (ctx) => {
-  await handleGameCheckMenu(ctx);
-});
+// ─── Resi callbacks ───────────────────────────────────────────────────────
 
-bot.command("cekongkir", async (ctx) => {
-  await handleOngkirMenu(ctx);
-});
-
-bot.command("cekresi", async (ctx) => {
+bot.callbackQuery("resi_start", async (ctx) => {
+  await ctx.answerCallbackQuery();
   await handleResiMenu(ctx);
 });
+
+// ─── Shalat callbacks ─────────────────────────────────────────────────────
+
+bot.callbackQuery("shalat_start", async (ctx) => {
+  await ctx.answerCallbackQuery();
+  await handleShalatMenu(ctx);
+});
+
+bot.callbackQuery("shalat:menu", async (ctx) => {
+  await handleMenuCb(ctx);
+});
+
+bot.callbackQuery("shalat:tomorrow", async (ctx) => {
+  await handleTomorrowCb(ctx);
+});
+
+bot.callbackQuery("shalat:change", async (ctx) => {
+  await handleChangeCb(ctx);
+});
+
+bot.callbackQuery("shalat:cancel", async (ctx) => {
+  await handleCancelCb(ctx);
+});
+
+bot.callbackQuery("shalat:backprov", async (ctx) => {
+  await handleBackToProvCb(ctx);
+});
+
+bot.callbackQuery("shalat:noop", async (ctx) => {
+  await ctx.answerCallbackQuery();
+});
+
+// Province pagination: shalat:pp:PAGE
+bot.callbackQuery(/^shalat:pp:(\d+)$/, async (ctx) => {
+  const page = parseInt(ctx.match[1], 10);
+  await handleProvPageCb(ctx, page);
+});
+
+// Province select: shalat:setp:PROVINSI
+bot.callbackQuery(/^shalat:setp:(.+)$/, async (ctx) => {
+  await handleProvSelectCb(ctx, ctx.match[1]);
+});
+
+// Kota pagination: shalat:kp:PAGE
+bot.callbackQuery(/^shalat:kp:(\d+)$/, async (ctx) => {
+  const page = parseInt(ctx.match[1], 10);
+  await handleKotaPageCb(ctx, page);
+});
+
+// Kota select: shalat:setk:KABKOTA
+bot.callbackQuery(/^shalat:setk:(.+)$/, async (ctx) => {
+  await handleKotaSelectCb(ctx, ctx.match[1]);
+});
+
+// Notification callbacks
+bot.callbackQuery("shalat:notif:menu", async (ctx) => {
+  await handleNotifMenuCb(ctx);
+});
+
+bot.callbackQuery("shalat:notif:save", async (ctx) => {
+  await handleNotifSaveCb(ctx);
+});
+
+bot.callbackQuery("shalat:notif:off", async (ctx) => {
+  await handleNotifOffCb(ctx);
+});
+
+// Notification toggle: shalat:notif:tog:MINUTES
+bot.callbackQuery(/^shalat:notif:tog:(\d+)$/, async (ctx) => {
+  const minutes = parseInt(ctx.match[1], 10);
+  await handleNotifToggleCb(ctx, minutes);
+});
+
+// ─── Commands ─────────────────────────────────────────────────────────────
+
+bot.command("cekid", async (ctx) => { await handleGameCheckMenu(ctx); });
+bot.command("cekongkir", async (ctx) => { await handleOngkirMenu(ctx); });
+bot.command("cekresi", async (ctx) => { await handleResiMenu(ctx); });
+bot.command("sholat", async (ctx) => { await handleShalatMenu(ctx); });
+bot.command("jadwalsholat", async (ctx) => { await handleShalatMenu(ctx); });
+
+// ─── Text message router ──────────────────────────────────────────────────
 
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
 
-  // Session handlers take priority (in order of registration)
   if (hasActiveGameSession(ctx.chat.id)) {
     const handled = await handleGameTextInput(ctx);
     if (handled) return;
@@ -236,32 +319,18 @@ bot.on("message:text", async (ctx) => {
     if (handled) return;
   }
 
-  if (youtubeRegex.test(text)) {
-    await handleYtDownload(ctx, text);
-    return;
-  }
-  if (instagramRegex.test(text)) {
-    await handleIgDownload(ctx, text);
-    return;
-  }
-  if (tiktokRegex.test(text)) {
-    await handleTtDownload(ctx, text);
-    return;
-  }
-  if (threadsRegex.test(text)) {
-    await handleThreadsDownload(ctx, text);
-    return;
-  }
-  if (facebookRegex.test(text)) {
-    await handleFbDownload(ctx, text);
-    return;
-  }
+  if (youtubeRegex.test(text)) { await handleYtDownload(ctx, text); return; }
+  if (instagramRegex.test(text)) { await handleIgDownload(ctx, text); return; }
+  if (tiktokRegex.test(text)) { await handleTtDownload(ctx, text); return; }
+  if (threadsRegex.test(text)) { await handleThreadsDownload(ctx, text); return; }
+  if (facebookRegex.test(text)) { await handleFbDownload(ctx, text); return; }
 
   await ctx.reply(
     "Kirimkan link YouTube, Instagram, TikTok, Threads, atau Facebook yang valid — atau ketik /start untuk melihat menu.\n\n" +
     "🎮 Cek ID game: /cekid\n" +
     "📦 Cek ongkir: /cekongkir\n" +
-    "📬 Cek resi: /cekresi",
+    "📬 Cek resi: /cekresi\n" +
+    "🕌 Jadwal sholat: /sholat",
   );
 });
 
