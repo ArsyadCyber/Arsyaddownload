@@ -6,7 +6,8 @@
     "lastChanged": 1780045967606,
     "notifEnabled": true,
     "notifMinutes": [
-      30
+      5,
+      15
     ]
   }
 ]
