@@ -124,18 +124,77 @@ export async function getScheduleForDate(
   kabkota: string,
   offsetDays = 0
 ): Promise<DaySchedule | null> {
-  const wib = getWIBDate(offsetDays);
-  const year = wib.getUTCFullYear();
-  const month = wib.getUTCMonth() + 1;
-  const day = wib.getUTCDate();
+  const utcOffset = getProvinsiUtcOffset(provinsi);
+  const local = getLocalDate(utcOffset, offsetDays);
+  const year = local.getUTCFullYear();
+  const month = local.getUTCMonth() + 1;
+  const day = local.getUTCDate();
   const schedule = await getMonthSchedule(provinsi, kabkota, year, month);
   return schedule.find((s) => s.tanggal === day) ?? null;
 }
 
+// ─── Timezone mapping ──────────────────────────────────────────────────────
+
+/**
+ * Maps each Indonesian province to its UTC offset.
+ * WIB = UTC+7 (Sumatera, Jawa, Kalimantan Barat & Tengah)
+ * WITA = UTC+8 (Kalimantan Selatan/Timur/Utara, Sulawesi, Bali, NTB, NTT)
+ * WIT  = UTC+9 (Maluku, Papua)
+ */
+const PROVINCE_UTC_OFFSET: Record<string, number> = {
+  // WIB (UTC+7)
+  "Aceh": 7,
+  "Sumatera Utara": 7,
+  "Sumatera Barat": 7,
+  "Riau": 7,
+  "Kepulauan Riau": 7,
+  "Jambi": 7,
+  "Bengkulu": 7,
+  "Sumatera Selatan": 7,
+  "Kepulauan Bangka Belitung": 7,
+  "Lampung": 7,
+  "Banten": 7,
+  "DKI Jakarta": 7,
+  "Jawa Barat": 7,
+  "Jawa Tengah": 7,
+  "D.I. Yogyakarta": 7,
+  "Jawa Timur": 7,
+  "Kalimantan Barat": 7,
+  "Kalimantan Tengah": 7,
+  // WITA (UTC+8)
+  "Kalimantan Selatan": 8,
+  "Kalimantan Timur": 8,
+  "Kalimantan Utara": 8,
+  "Bali": 8,
+  "Nusa Tenggara Barat": 8,
+  "Nusa Tenggara Timur": 8,
+  "Gorontalo": 8,
+  "Sulawesi Barat": 8,
+  "Sulawesi Selatan": 8,
+  "Sulawesi Tengah": 8,
+  "Sulawesi Tenggara": 8,
+  "Sulawesi Utara": 8,
+  // WIT (UTC+9)
+  "Maluku": 9,
+  "Maluku Utara": 9,
+  "Papua": 9,
+  "Papua Barat": 9,
+};
+
+const TZ_LABEL: Record<number, string> = { 7: "WIB", 8: "WITA", 9: "WIT" };
+
+export function getProvinsiUtcOffset(provinsi: string): number {
+  return PROVINCE_UTC_OFFSET[provinsi] ?? 7;
+}
+
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
-function getWIBDate(offsetDays = 0): Date {
-  return new Date(Date.now() + (7 * 3600 + offsetDays * 86400) * 1000);
+/**
+ * Returns a "local" Date object whose UTC fields represent local time.
+ * utcOffset: 7 = WIB, 8 = WITA, 9 = WIT
+ */
+function getLocalDate(utcOffset: number, offsetDays = 0): Date {
+  return new Date(Date.now() + (utcOffset * 3600 + offsetDays * 86400) * 1000);
 }
 
 function esc(text: string): string {
@@ -159,11 +218,13 @@ function prayerTimeToMinutes(time: string): number {
 }
 
 function formatSchedule(s: DaySchedule, provinsi: string, kabkota: string, label = "Jadwal Sholat"): string {
-  const [y, mo, d] = s.tanggal_lengkap.split("-");
+  const [y, mo] = s.tanggal_lengkap.split("-");
   const dateStr = `${s.hari}, ${s.tanggal} ${BULAN[parseInt(mo)]} ${y}`;
+  const utcOffset = getProvinsiUtcOffset(provinsi);
+  const tzLabel = TZ_LABEL[utcOffset] ?? "WIB";
   let msg = `📅 *${esc(label)}*\n`;
   msg += `📍 ${esc(kabkota)}, ${esc(provinsi)}\n`;
-  msg += `🗓 ${esc(dateStr)}\n\n`;
+  msg += `🗓 ${esc(dateStr)} \\(${tzLabel}\\)\n\n`;
   msg += PRAYERS.map((p) => {
     const time = s[p.key] as string;
     const label2 = p.label.padEnd(7);
@@ -572,20 +633,27 @@ const notifSent = new Set<string>(); // `chatId:YYYY-MM-DD:prayer:minutes`
 
 export function startShalatScheduler(bot: Bot) {
   setInterval(async () => {
-    const nowWIB = getWIBDate();
-    const nowMins = nowWIB.getUTCHours() * 60 + nowWIB.getUTCMinutes();
-    const todayStr = nowWIB.toISOString().slice(0, 10);
-
-    // Clear sent keys from previous days
-    for (const key of notifSent) {
-      if (!key.includes(`:${todayStr}:`)) notifSent.delete(key);
-    }
-
     for (const [, user] of usersMap) {
       if (!user.notifEnabled || user.notifMinutes.length === 0) continue;
+
+      // Use each user's local timezone for correct day and clock comparison
+      const utcOffset = getProvinsiUtcOffset(user.provinsi);
+      const localNow = getLocalDate(utcOffset);
+      const nowMins = localNow.getUTCHours() * 60 + localNow.getUTCMinutes();
+      const todayStr = localNow.toISOString().slice(0, 10); // YYYY-MM-DD in local time
+
+      // Clean up sent-notification keys that are not from today (local)
+      for (const key of notifSent) {
+        if (key.startsWith(`${user.chatId}:`) && !key.includes(`:${todayStr}:`)) {
+          notifSent.delete(key);
+        }
+      }
+
       try {
         const schedule = await getScheduleForDate(user.provinsi, user.kabkota);
         if (!schedule) continue;
+
+        const tzLabel = TZ_LABEL[utcOffset] ?? "WIB";
 
         for (const p of PRAYERS.filter((x) => x.fard)) {
           const pTime = schedule[p.key] as string;
@@ -593,7 +661,7 @@ export function startShalatScheduler(bot: Bot) {
 
           for (const before of user.notifMinutes) {
             const trigger = pMins - before;
-            // Trigger window: within current minute (0–1 min window, checked every 30s)
+            // Trigger window: [trigger, trigger+1) minutes — checked every 30s
             if (nowMins >= trigger && nowMins < trigger + 1) {
               const sentKey = `${user.chatId}:${todayStr}:${p.key}:${before}`;
               if (notifSent.has(sentKey)) continue;
@@ -603,7 +671,7 @@ export function startShalatScheduler(bot: Bot) {
                 `🔔 *Pengingat Sholat*\n\n` +
                 `${p.emoji} *${before} menit lagi — ${p.label}*\n` +
                 `📍 ${esc(user.kabkota)}\n` +
-                `🕐 Waktu ${p.label}: *${pTime}*`;
+                `🕐 Waktu ${p.label}: *${pTime}* ${tzLabel}`;
 
               await bot.api
                 .sendMessage(user.chatId, msg, { parse_mode: "MarkdownV2" })
@@ -612,7 +680,7 @@ export function startShalatScheduler(bot: Bot) {
           }
         }
       } catch {
-        // Skip on error, will retry next interval
+        // Skip user on error, will retry next interval
       }
     }
   }, 30_000);

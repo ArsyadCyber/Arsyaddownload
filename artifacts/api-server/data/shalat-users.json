@@ -1,0 +1,12 @@
+[
+  {
+    "chatId": 7755624572,
+    "provinsi": "Kalimantan Selatan",
+    "kabkota": "Kab. Hulu Sungai Tengah",
+    "lastChanged": 1780045967606,
+    "notifEnabled": true,
+    "notifMinutes": [
+      30
+    ]
+  }
+]
