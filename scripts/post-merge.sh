@@ -1,4 +1,6 @@
 #!/bin/bash
-set -e
-pnpm install --frozen-lockfile
-pnpm --filter db push
+# Post-merge hook untuk setup otomatis setelah pull
+
+echo "Running post-merge setup..."
+npm install
+npm run build:api

@@ -5,9 +5,10 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "start": "node --enable-source-maps ./artifacts/api-server/dist/index.mjs",
+    "start": "npm run build:check && node --enable-source-maps ./artifacts/api-server/dist/index.mjs",
     "build": "npm run build:api",
-    "build:api": "cd artifacts/api-server && npm run build",
+    "build:api": "cd artifacts/api-server && node build.mjs",
+    "build:check": "node -e \"const fs = require('fs'); if (!fs.existsSync('./artifacts/api-server/dist')) { console.log('Building...'); require('child_process').execSync('npm run build:api', {stdio: 'inherit'}); }\"",
     "dev": "export NODE_ENV=development && npm run build:api && npm start",
     "setup": "npm install && npm run build",
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; echo \"Using npm package manager\"'"
