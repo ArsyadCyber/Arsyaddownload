@@ -1,16 +1,32 @@
 {
-  "name": "workspace",
-  "version": "0.0.0",
+  "name": "arsyaddownload",
+  "version": "1.0.0",
+  "description": "Download API Server - YouTube, Facebook, Instagram, TikTok",
   "license": "MIT",
+  "type": "module",
   "scripts": {
-    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
-    "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --filter \"./scripts\" --if-present run typecheck"
+    "start": "node --enable-source-maps ./artifacts/api-server/dist/index.mjs",
+    "build": "npm run build:api",
+    "build:api": "cd artifacts/api-server && npm run build",
+    "dev": "export NODE_ENV=development && npm run build:api && npm start",
+    "setup": "npm install && npm run build",
+    "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; echo \"Using npm package manager\"'"
   },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "keywords": [
+    "download",
+    "youtube",
+    "facebook",
+    "instagram",
+    "tiktok",
+    "api"
+  ],
+  "author": "ArsyadCyber",
   "private": true,
   "devDependencies": {
-    "prettier": "^3.8.3",
     "typescript": "~5.9.3"
   }
 }
